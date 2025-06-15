@@ -1,518 +1,678 @@
-#interface.py
-
 import csv
 import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox, StringVar, Toplevel
+from tkinter import messagebox, StringVar, Toplevel, ttk
 import numpy as np
-import data  # Предполагается, что ваши данные находятся в файле data.py
+import data
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 from docx import Document
 import tkinter.filedialog
-import re
-import math
+from typing import List, Tuple, Dict, Optional, Union, Any
+from dataclasses import dataclass
+from enum import Enum
 
+class FileType(Enum):
+    CSV = ("CSV files", "*.csv")
+    EXCEL = ("Excel files", "*.xlsx")
+    WORD = ("Word documents", "*.docx")
 
-class ToolTip(object):
+@dataclass
+class CalculationResult:
+    t: float
+    U: float
+    D: int
+    q_chru: float
+    q_c0: float
+    group: int
+    consumer: str
+    PcN: float
+    alpha: float
+    Q: float
+    velocity: float
 
-    def __init__(self, widget):
-        self.widget = widget
-        self.tipwindow = None
-        self.id = None
-        self.x = self.y = 0
+class LoadCalculator:
+    TEXT = {
+        "title": "Расчёт нагрузок",
+        "u_label": "Общее число потребителей (U):",
+        "calculate": "🔄 Рассчитать",
+        "save_results": "💾 Сохранить результаты",
+        "results_title": "Результаты расчёта нагрузок"
+    }
 
-    def showtip(self, text, new_x, new_y):
-        "Display text in tooltip window"
-        self.text = text
-        if self.tipwindow or not self.text:
-            return
-        x, y, cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() - 750 + new_x
-        y = y + cy + self.widget.winfo_rooty() - 200 + new_y
-        self.tipwindow = tw = Toplevel(self.widget)
-        tw.wm_overrideredirect(1)
-        tw.wm_geometry("+%d+%d" % (x, y))
-        label = tk.Label(tw, text=self.text, justify="left",
-                      background="#ffffff", relief="solid", borderwidth=1,
-                      font=("tahoma", "8", "normal"))
-        label.pack(ipadx=1)
-
-    def hidetip(self):
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
-
-def CreateToolTip(widget, text, new_x, new_y):
-    toolTip = ToolTip(widget)
-    def enter(event):
-        toolTip.showtip(text, new_x, new_y)
-    def leave(event):
-        toolTip.hidetip()
-    widget.bind('<Enter>', enter)
-    widget.bind('<Leave>', leave)
-
-class ConsumerCalculator:
-    def __init__(self, master):
-        self.amount_users = []
-        self.master = master
-        self.master.title("Расчёт потребителей")
-
-        # Создание фрейма для поля ввода t и кнопок
-        input_frame = tk.Frame(master)
-        input_frame.pack(side=tk.TOP, fill=tk.X)
-
-        # Добавление метки перед полем ввода t
-        self.label_t = tk.Label(input_frame, text="№ потреб.:")
-        self.label_t.pack(side=tk.LEFT, padx=5, pady=5)
-        CreateToolTip(self.label_t, text= 'Жилые дома квартирного типа:\n'
-                      '     1) с водопроводом и канализацией без ванн\n'
-                      '     2) с водопроводом, канализацией и ваннами с водонагревателями, работающими на твердом топливе\n'
-                      '     3) с водопроводом, канализацией и ваннами с газовыми водонагревателями\n'
-                      '     4) с централизованным горячим водоснабжением, оборудованные умывальниками, мойками и душами\n'
-                      '     5) с сидячими ваннами, оборудованными душами\n'
-                      '     6) с ваннами длиной от 1500 мм, оборудованными душами\n'
-                      'Общежития: \n'
-                      '     7) с общими душевыми\n'
-                      '     8) с душами при всех жилых комнатах\n'
-                      '     9) с общими кухнями и блоками душевых на этажах при жилых комнатах в каждой секции здания\n'
-                      'Гостиницы пансионаты и мотели\n'
-                      '     10) с общими ваннами и душами\n'
-                      '     11) с душами во всех отдельных номерах\n'
-                      '     12) с ваннами в отдельных номерах процент общего числа номеров до 25\n'
-                      '     13) с ваннами в отдельных номерах процент общего числа номеров до 75\n'
-                      '     14) с ваннами в отдельных номерах процент общего числа номеров до 100\n'
-                      'Больницы \n'
-                      '     15) с общими ваннами и душевыми\n'
-                      '     16)с санузлами приближенными к палатам\n'
-                      '     17) инфекционные\n' 
-                      'Санатории и дома отдыха\n'
-                      '     18) с общими душами\n'
-                      '     19) с душами при всех жилых комнатах\n'
-                      '     20) с ваннами при всех жилых комнатах\n'
-                      'Поликлиники и амбулатории\n'
-                      '     21) Поликлиники и амбулатории\n'
-                      'Дошкольные образовательные организации\n'
-                      '  C дневным пребыванием детей\n'
-                      '     22)  со столовыми работающими на полуфабрикатах\n'
-                      '     23) с дневным пребыванием детей со столовыми работающими на сырье и прачечными оборудованными автоматическими стиральными машинами\n'
-                      '  C круглосуточным пребыванием детей\n'
-                      '     24) со столовыми работающими на полуфабрикатах\n'
-                      '     25) со столовыми работающими на сырье и прачечными оборудованными автоматическими стиральными машинами\n'
-                      '     26) со столовыми работающими на полуфабрикатах\n'
-                      '     27) со столовыми работающими на сырье и прачечными оборудованными автоматическими стиральными машинами\n'
-                      'Прачечные \n'
-                      '     28) механизированные\n'
-                      '     29) немеханизированные\n'
-                      'Административные здания\n'
-                      '     30) Административные здания\n'
-                      'Образовательные организации\n'
-                      '     31) профессионального и высшего образования с душевыми при гимнастических залах и буфетами реализующими готовую продукцию\n'
-                      'Лаборатории\n'
-                      '     32) общеобразовательных организаций и организаций профессиональных и высшего образования\n'
-                      'Общеобразовательные организации\n'
-                      '     33) с душевыми при гимнастических залах и столовыми работающими на полуфабрикатах\n'
-                      '     34) с продленным днем\n'
-                      'Общеобразовательные организации интернаты\n'
-                      '     35) с помещениями учебными с душевыми при гимнастических залах\n'
-                      '     36) с помещениями спальными\n'
-                      'Аптеки\n'
-                      '     37) торговый зал и подсобные помещения\n'
-                      '     38) лаборатория приготовления лекарств\n'
-                      'Предприятия общественного питания для приготовления пищи реализуемой\n'
-                      '     39) в обеденном зале\n'
-                      '     40) на дом\n'
-                      'Магазины\n'
-                      '     41) продовольственные\n'
-                      '     42) промтоварные\n'
-                      'Парикмахерские\n'
-                      '     43) Парикмахерские\n'
-                      'Кинотеатры\n'
-                      '     44) Кинотеатры\n'
-                      'Клубы\n'
-                      '     45) Клубы\n'
-                      'Театры\n'
-                      '     46) для зрителей\n'
-                      '     47) для артистов\n'
-                      'Стадионы и спортзалы'
-                      '     48) для зрителей\n'
-                      '     49) для физкультурников с учетом приема душа\n' 
-                      '     50) для спортсменов с учетом приема душа\n'
-                      'Плавательные бассейны\n'
-                      '     51) пополнение бассейна\n' 
-                      '     52) для зрителей\n'
-                      '     53) для спортсменов с учетом приема душа\n'
-                      'Бани\n'
-                      '     54) для мытья в мыльной с тазами на скамьях и ополаскиванием в душе\n'
-                      '     55) с приемом оздоровительных процедур и ополаскиванием в душе\n'
-                      '     56) душевая кабина\n'
-                      '     57) ванная кабина\n'
-                      'Душевые в бытовых помещениях промышленных предприятий\n'
-                      '     58) Душевые в бытовых помещениях промышленных предприятий\n'
-                      'Цеха\n'
-                      '     59) с тепловыделениями свыше 84 кДж на 1 м куб в час\n'
-                      '     60) остальные цеха\n'
-                      'Расход воды на поливку\n'
-                      '     61) травяного покрова\n'
-                      '     62) футбольного поля\n' 
-                      '     63) остальных спортивных сооружений\n'
-                      '     64) совершенствованных покрытий тротуаров площадей заводских проездов\n' 
-                      '     65) зеленых насаждений газонов и цветников\n'
-                      'Заливка\n'
-                      '     66) поверхности катка', new_x = 0, new_y = 0)
-        # Поле для ввода t
-        self.t_entry = tk.Entry(input_frame)
-        self.t_entry.pack(side=tk.LEFT, padx=5, pady=5)
-        self.t_entry.insert(0, "Введите номер потребителя (t)")
-
-        # Кнопки для добавления и удаления участка, размещенные рядом с выбором диаметра
-        add_section_button = tk.Button(input_frame, text="Добавить новый участок", command=lambda: self.add_section())
-        add_section_button.pack(side=tk.LEFT)
-
-        add_section_label = tk.Label(input_frame, text="Добавить к")
-        add_section_label.pack(side=tk.LEFT)
-        CreateToolTip(add_section_label, text='Выбор положения для добавления участка.\n'
-                      'Добавить к концу - добавляет участок в конец\n'
-                      'При выборе числового значения - добавляет участок после выбранного значения', new_x = 325, new_y = 200)
+    def __init__(self, master, consumer_data):
+        self.top = tk.Toplevel(master)
+        self.consumer_data = consumer_data
+        self.top.title(self.TEXT["title"])
+        self.top.geometry("900x600")
         
-        self.add_combobox = ttk.Combobox(input_frame, state="readonly", values = "Концу", width=20)
-        self.values = tuple(self.add_combobox["values"])
-        self.add_combobox.pack(side=tk.LEFT, padx=5, pady=5)
-        self.add_combobox.current(0)
+        self._setup_ui()
         
-
-        # Кнопка для расчета
-        self.calculate_table_button = tk.Button(input_frame, text='Рассчитать по\n табличным данным', command=self.calculate_table, width=20)
-        self.calculate_table_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        self.calculate_gidr_button = tk.Button(input_frame, text='Рассчитать по\n формуле гидравлики', command=self.calculate_gidr, width=20)
-        self.calculate_gidr_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        # Кнопка для отображения результатов расчета
-        self.results_button = tk.Button(input_frame, text="Результаты расчёта", command=self.show_results, width=20)
-        self.results_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        # Кнопка для сохранения результатов
-        self.save_button = tk.Button(input_frame, text="Сохранить результаты", command=self.save_results, width=20)
-        self.save_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        # Создание фрейма для прокрутки
-        self.frame = tk.Frame(self.master)
-        self.frame.pack(fill=tk.BOTH, expand=True)
-
-        # Создание Canvas для вертикальной и горизонтальной прокрутки
-        self.canvas = tk.Canvas(self.frame)
-        self.scrollbar_y = tk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
-        self.scrollbar_x = tk.Scrollbar(self.frame, orient="horizontal", command=self.canvas.xview)
-        self.scrollable_frame = tk.Frame(self.canvas)
-
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-
-        self.canvas.configure(yscrollcommand=self.scrollbar_y.set)
-        self.canvas.configure(xscrollcommand=self.scrollbar_x.set)
-
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
-        self.scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.entries = []  # Список для хранения полей ввода
-        self.results_data = []  # Список для хранения результатов расчетов
-        self.t_string_value = ""  # Переменная для хранения значения t_string
-        self.among_entries = []
-        self.added = []
-        self.u_entry = None
-        self.diam_var = None
-        # # Добавляем первый участок по умолчанию
-        self.add_section()
-
-    def add_section(self):
-        frame = tk.Frame(self.scrollable_frame, name = "frame"+str(len(self.amount_users)+1))
-        # Поля для ввода номера потребителя
-        i_entry = tk.Label(frame, text= "Номер участка: ")
-        i_entry.pack(side=tk.LEFT)
-        k_label = tk.Label(frame, text= str(len(self.amount_users)+1))
-        k_label.pack(side=tk.LEFT)
-
-        # Поля для ввода U и диаметра
-        self.u_entry = tk.Entry(frame)
-        self.u_entry.pack(side=tk.LEFT)
-        self.u_entry.insert(0, "Введите U")
-
-        self.diam_var = StringVar(frame)
-        self.diam_var.set(data.diam_values[0])  # Устанавливаем значение по умолчанию
-        diam_menu = tk.OptionMenu(frame, self.diam_var, *data.diam_values)
-        diam_menu.pack(side=tk.LEFT)
-
-        delete_button = tk.Button(frame, text="Удалить участок", command=lambda: self.remove_section(frame))
-        delete_button.pack(side=tk.LEFT)
-        enumerate(str(self.entries))
+    def _setup_ui(self):
+        input_frame = ttk.Frame(self.top, padding="10")
+        input_frame.pack(fill=tk.X)
         
-        if self.add_combobox.get().isdigit() and int(self.add_combobox.get())>1:
-            indx = 0
-            puth = str(self.entries[0][2])
-            while puth[-1].isdigit():
-                puth = puth[:-1]
-            found = str(puth+str(int(self.add_combobox.get())))
-            for i in range(len(self.entries)):
-                if found in str(self.entries[i][2]):
-                    indx = i
-            frame.pack(after=found)
-            self.entries.insert(indx+1, (self.u_entry, self.diam_var, frame, k_label))
-        elif self.add_combobox.get().isdigit() and int(self.add_combobox.get()) == 1:
-            frame.pack(after=str(self.entries[0][2]))
-            self.entries.insert(1, (self.u_entry, self.diam_var, frame, k_label))
-        else:
-            frame.pack()
-            self.entries.append((self.u_entry, self.diam_var, frame, k_label))
+        ttk.Label(input_frame, text=self.TEXT["u_label"]).pack(side=tk.LEFT)
+        self.u_entry = ttk.Entry(input_frame, width=15)
+        self.u_entry.pack(side=tk.LEFT, padx=5)
         
-        self.amount_users.append(len(self.amount_users)+1)
-        self.add_combobox["values"] = self.values + tuple(self.amount_users)
+        ttk.Button(
+            input_frame, text=self.TEXT["calculate"],
+            command=self.calculate
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            input_frame, text=self.TEXT["save_results"],
+            command=self.save_results
+        ).pack(side=tk.LEFT)
+        
+        self.results_frame = ttk.Frame(self.top, padding="10")
+        self.results_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.tree = ttk.Treeview(self.results_frame, columns=("Parameter", "Value", "Unit"), show="headings")
+        self.tree.heading("Parameter", text="Параметр")
+        self.tree.heading("Value", text="Значение")
+        self.tree.heading("Unit", text="Ед. изм.")
+        self.tree.column("Parameter", width=300)
+        self.tree.column("Value", width=200)
+        self.tree.column("Unit", width=100)
+        
+        scroll_y = ttk.Scrollbar(self.results_frame, orient="vertical", command=self.tree.yview)
+        scroll_x = ttk.Scrollbar(self.results_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        temp_frame = ttk.Frame(self.top, padding="10")
+        temp_frame.pack(fill=tk.X)
+        
+        ttk.Label(temp_frame, text="Температура горячей воды (t_h):").pack(side=tk.LEFT)
+        self.t_h_entry = ttk.Entry(temp_frame, width=5)
+        self.t_h_entry.insert(0, "60")
+        self.t_h_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(temp_frame, text="Температура холодной воды (t_c):").pack(side=tk.LEFT, padx=(10,0))
+        self.t_c_entry = ttk.Entry(temp_frame, width=5)
+        self.t_c_entry.insert(0, "5")
+        self.t_c_entry.pack(side=tk.LEFT)
+    
+    def calculate(self):
+        try:
+            U = float(self.u_entry.get())
+            t_h = float(self.t_h_entry.get())
+            t_c = float(self.t_c_entry.get())
+            
+            for item in self.tree.get_children():
+                self.tree.delete(item)
                 
-    def remove_section(self, frame):
-        # Удаление указанного участка и обновление интерфейса
-        frame.pack_forget()  # Скрываем фрейм
-        self.entries = [entry for entry in self.entries if entry[2] != frame]
-        puth = re.findall(r'\d+', str(frame))
-        self.amount_users.remove(int(puth[1]))      
-        self.add_combobox["values"] = ''
-        self.add_combobox["values"] = self.values + tuple(self.amount_users)
-
-    def clear_entries(self):
-        for entry, _, _ in self.entries:
-            entry.delete(0, tk.END)
-            entry.insert(0, "")
-        self.t_entry.delete(0, tk.END)
-        self.t_entry.insert(0, "Введите номер потребителя (t)")
-
-    def calculate_gidr(self):
-        self.results_data.clear()  # Очищаем предыдущие результаты
-        try:
-            # Получаем значение t из поля ввода
-            t_input = float(self.t_entry.get())
-        except ValueError:
-            messagebox.showerror("Ошибка", "Введите корректное значение для t.")
-            return
-
-        for u_entry, diam_var, frame, k_label in self.entries:
-            try:
-                # Получаем значения U и диаметр
-                U = float(u_entry.get())
-                diam_input = int(diam_var.get())
-                k_input = int(k_label.cget("text"))
-
-                if t_input not in data.t_values:
-                    raise ValueError(f"Значение t={t_input} не найдено в массиве.")
-
-                index = np.where(data.t_values == t_input)[0][0]
-                q_c_hru = data.q_c_hru_values[index]
-                q_c_0 = data.q_c_0_values[index]
-                t_num = data.t_num_values[index]
-                t_string = data.t_string_values[index]
-
-                # Сохраняем значение t_string для отображения
-                self.t_string_value = t_string
-
-                # Получаем значения q и v для выбранного диаметра
-                q_values = data.q_dict[diam_input]
-                v_values = data.v_dict[diam_input]
-
-                x_input = (q_c_hru * U) / (3600 * q_c_0)
-                y_output = self.interpolate_or_extrapolate(x_input, data.x_values, data.y_values)
-                Q_output = 5 * (q_c_0) * (y_output)
-
-                for i in range(len(q_values) - 1):
-                    v_interpolated = (4*(Q_output/1000))/(math.pi*(diam_input/1000)**2)
-
-                if v_interpolated is None:
-                    raise ValueError("Не удалось вычислить значение скорости.")
-
-                # Сохраняем результаты
-                result = [k_input, t_input, U, diam_input, q_c_hru, q_c_0, t_num, t_string, round(x_input, 4),
-                          round(y_output, 4), round(Q_output, 4), round(v_interpolated, 4)]
-                self.results_data.append(result)
-
-            except ValueError as e:
-                messagebox.showerror("Ошибка", str(e))
-                return  # Прерываем выполнение функции при ошибке
-            messagebox.showinfo("Успех", "Расчет по гидравлике выполнен успешно.")
-
-    def calculate_table(self):
-        self.results_data.clear()  # Очищаем предыдущие результаты
-        try:
-            # Получаем значение t из поля ввода
-            t_input = float(self.t_entry.get())
-        except ValueError:
-            messagebox.showerror("Ошибка", "Введите корректное значение для t.")
-            return
-
-        for u_entry, diam_var, frame, k_label in self.entries:
-            try:
-                # Получаем значения U и диаметр
-                U = float(u_entry.get())
-                diam_input = int(diam_var.get())
-                k_input = int(k_label.cget("text"))
-
-                if t_input not in data.t_values:
-                    raise ValueError(f"Значение t={t_input} не найдено в массиве.")
-
-                index = np.where(data.t_values == t_input)[0][0]
-                q_c_hru = data.q_c_hru_values[index]
-                q_c_0 = data.q_c_0_values[index]
-                t_num = data.t_num_values[index]
-                t_string = data.t_string_values[index]
-
-                # Сохраняем значение t_string для отображения
-                self.t_string_value = t_string
-
-                # Получаем значения q и v для выбранного диаметра
-                q_values = data.q_dict[diam_input]
-                v_values = data.v_dict[diam_input]
-
-                x_input = (q_c_hru * U) / (3600 * q_c_0)
-                y_output = self.interpolate_or_extrapolate(x_input, data.x_values, data.y_values)
-                Q_output = 5 * (q_c_0) * (y_output)
-
-                # Линейная интерполяция или экстраполяция для v
-                v_interpolated = None
-                if Q_output < q_values[0]:
-                    q0, q1 = q_values[0], q_values[1]
-                    v0, v1 = v_values[0], v_values[1]
-                    v_interpolated = v0 + (v1 - v0) * (Q_output - q0) / (q1 - q0)
-                elif Q_output > q_values[-1]:
-                    q0, q1 = q_values[-2], q_values[-1]
-                    v0, v1 = v_values[-2], v_values[-1]
-                    v_interpolated = v0 + (v1 - v0) * (Q_output - q0) / (q1 - q0)
-                else:
-                    for i in range(len(q_values) - 1):
-                        if q_values[i] <= Q_output <= q_values[i + 1]:
-                            q0, q1 = q_values[i], q_values[i + 1]
-                            v0, v1 = v_values[i], v_values[i + 1]
-                            v_interpolated = v0 + (v1 - v0) * (Q_output - q0) / (q1 - q0)
-                            break
-
-                if v_interpolated is None:
-                    raise ValueError("Не удалось вычислить значение скорости.")
-
-                # Сохраняем результаты
-                result = [k_input, t_input, U, diam_input, q_c_hru, q_c_0, t_num, t_string, round(x_input, 4),
-                          round(y_output, 4), round(Q_output, 4), round(v_interpolated, 4)]
-                self.results_data.append(result)
-
-            except ValueError as e:
-                messagebox.showerror("Ошибка", str(e))
-                return  # Прерываем выполнение функции при ошибке
-
-        # Сообщение о выполненном расчете
-        messagebox.showinfo("Успех", "Расчет по таблице выполнен успешно.")
-
-    def interpolate_or_extrapolate(self, x_input, x_values, y_values):
-        if x_input < x_values[0]:
-            x0, x1 = x_values[0], x_values[1]
-            y0, y1 = y_values[0], y_values[1]
-            return y0 + (y1 - y0) * (x_input - x0) / (x1 - x0)
-        elif x_input > x_values[-1]:
-            x0, x1 = x_values[-2], x_values[-1]
-            y0, y1 = y_values[-2], y_values[-1]
-            return y0 + (y1 - y0) * (x_input - x0) / (x1 - x0)
-        else:
-            for i in range(len(x_values) - 1):
-                if x_values[i] <= x_input <= x_values[i + 1]:
-                    x0, x1 = x_values[i], x_values[i + 1]
-                    y0, y1 = y_values[i], y_values[i + 1]
-                    return y0 + (y1 - y0) * (x_input - x0) / (x1 - x0)
-
-    def show_results(self):
-        # Открываем новое окно для отображения результатов
-        results_window = Toplevel(self.master)
-        results_window.title("Результаты расчёта")
-
-        # Получаем значение t_string из последнего результата
-        if self.results_data:
-            self.t_string_value = self.results_data[0][7]  # Предполагаем, что t_string одинаков для всех результатов
-
-        # Создаем метку для t_string
-        t_string_label = tk.Label(results_window, text=f"Потребитель: {self.t_string_value}", font=("Arial", 12))
-        t_string_label.pack(pady=5)
-
-        # Создание заголовков таблицы
-        headers = ["Участок", "t", "U", "D", "q_(c)hru", "q_(c)0", "Группа (t_num)", "Потребитель", "Pc*N", "alpha", "Q", "Скорость"]
-
-        header_frame = tk.Frame(results_window)
-        for header in headers:
-            label = tk.Label(header_frame, text=header, borderwidth=1, relief="solid", width=15)
-            label.pack(side=tk.LEFT)
-        header_frame.pack()
-
-        # Создание области для результатов
-        results_frame = tk.Frame(results_window)
-        results_frame.pack()
-
-        for result in self.results_data:
-            result_row = tk.Frame(results_frame)
-            result_row.pack()
-
-            for res in result:
-                label = tk.Label(result_row, text=str(res), borderwidth=1, relief="solid", width=15)
-                label.pack(side=tk.LEFT)
-
-    def save_results(self):
-        file_path = tk.filedialog.asksaveasfilename(defaultextension=".csv",
-                                                    filetypes=[("CSV files", ".csv"), ("Excel files", ".xlsx"),
-                                                               ("Word documents", ".docx")])
-        if file_path:
-            extension = file_path.split('.')[-1].lower()
-            if extension == 'csv':
-                self.save_to_csv(file_path)
-            elif extension == 'xlsx':
-                self.save_to_excel(file_path)
-            elif extension == 'docx':
-                self.save_to_docx(file_path)
+            if self.consumer_data:
+                idx = self.consumer_data['index']
+                
+                results = [
+                    ("Секундная вероятность действия приборов обшая (P_tot*N)", 
+                     (self.consumer_data['q_tot_hru'] * U) / (3600 * self.consumer_data['q_tot_0']), 
+                     "-"),
+                    ("Секундная вероятность действия приборов на ГВС (P_h*N)", 
+                     (self.consumer_data['q_h_hru'] * U) / (3600 * self.consumer_data['q_h_0']), 
+                     "-"),
+                    ("Секундная вероятность действия приборов на ХВС (P_c*N)", 
+                     (self.consumer_data['q_c_hru'] * U) / (3600 * self.consumer_data['q_c_0']), 
+                     "-"),
+                     
+                    ("Расчетный секундный расход общий (q_tot)", 
+                     5 * self.consumer_data['q_tot_0'] * self._calculate_alpha(self.consumer_data['q_tot_hru'], self.consumer_data['q_tot_0'], U), 
+                     "л/с"),
+                    ("Расчетный секундный расход на ГВС (q_h)", 
+                     5 * self.consumer_data['q_h_0'] * self._calculate_alpha(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0'], U), 
+                     "л/с"),
+                    ("Расчетный секундный расход на ХВС (q_c)", 
+                     5 * self.consumer_data['q_c_0'] * self._calculate_alpha(self.consumer_data['q_c_hru'], self.consumer_data['q_c_0'], U), 
+                     "л/с"),
+                     
+                    ("Часовая вероятность действия приборов общая (P_tot*N)", 
+                     self.consumer_data['q_tot_hru'] * U / self.consumer_data['q_tot_0_hr'], 
+                     "-"),
+                    ("Часовая вероятность действия приборов на ГВС(P_h*N)", 
+                     self.consumer_data['q_h_hru'] * U / self.consumer_data['q_h_0_hr'], 
+                     "-"),
+                    ("Часовая вероятность действия приборов на ХВС (P_c*N)", 
+                     self.consumer_data['q_c_hru'] * U / self.consumer_data['q_c_0_hr'], 
+                     "-"),
+                     
+                    ("Часовой расход общий (q_tot_hr)", 
+                     0.005 * self.consumer_data['q_tot_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_tot_hru'], self.consumer_data['q_tot_0_hr'], U), 
+                     "м³/ч"),
+                    ("Часовой расход на ГВС (q_h_hr)", 
+                     0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U), 
+                     "м³/ч"),
+                    ("Часовой расход на ХВС (q_c_hr)", 
+                     0.005 * self.consumer_data['q_c_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_c_hru'], self.consumer_data['q_c_0_hr'], U), 
+                     "м³/ч"),
+                     
+                    ("Суточный расход общий (Q_сут_tot)", 
+                     self.consumer_data['q_tot'] * U / 1000, 
+                     "м³/сут"),
+                    ("Суточный расход на ГВС (Q_сут_h)", 
+                     self.consumer_data['q_h'] * U / 1000, 
+                     "м³/сут"),
+                    ("Суточный расход на ХВС (Q_сут_c)", 
+                     self.consumer_data['q_c'] * U / 1000, 
+                     "м³/сут"),
+                     
+                    ("Расход тепла на ГВС (Q(h,hr))", 
+                     1.16 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)) * (t_h - t_c) + 0.4 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)), 
+                     "кВт")
+                ]
+                
+                for param, value, unit in results:
+                    self.tree.insert("", "end", values=(param, f"{value:.4f}", unit))
+                    
             else:
-                messagebox.showerror("Неверный формат файла.",
-                                     "Файл должен быть сохранен в формате CSV, XLSX или DOCX.")
-        else:
-            messagebox.showwarning("Файл не сохранён.", "Не удалось сохранить файл.")
+                messagebox.showerror("Ошибка", "Нет данных о потребителе")
+                
+        except ValueError as e:
+            messagebox.showerror("Ошибка", f"Некорректный ввод: {str(e)}")
+    
+    #секундная альфа
+    def _calculate_alpha(self, q_hru, q_0, U):
+        x = (q_hru * U) / (3600 * q_0)
+        return ConsumerCalculator._interpolate(x, data.x_values, data.y_values)
+    
+    #часовая альфа
+    def _calculate_alpha_h(self, q_hru, q_0, U):
+        x = (q_hru * U) / (q_0)
+        return ConsumerCalculator._interpolate(x, data.x_values, data.y_values)
+    
+    def save_results(self):
+        """Сохраняет результаты расчётов в файл (DOCX, CSV или Excel)"""
+        if not hasattr(self, 'tree') or not self.tree.get_children():
+            messagebox.showerror("Ошибка", "Нет данных для сохранения")
+            return
 
-    def save_to_excel(self, file_path):
+        # Запрашиваем у пользователя путь и тип файла
+        file_path = tkinter.filedialog.asksaveasfilename(
+            defaultextension=".docx",
+            filetypes=[(desc, ext) for desc, ext in [ft.value for ft in FileType]],
+            title="Сохранить результаты расчёта"
+        )
+    
+        if not file_path:  # Пользователь отменил сохранение
+            return
+
+        try:
+            # Собираем данные из Treeview
+            data = []
+            for item in self.tree.get_children():
+                values = self.tree.item(item, 'values')
+                data.append({
+                    "parameter": values[0],
+                    "value": values[1],
+                    "unit": values[2]
+                })
+
+            # Определяем расширение файла
+            extension = file_path.split('.')[-1].lower()
+
+            if extension == 'docx':
+                self._save_to_docx(file_path, data)
+            elif extension == 'csv':
+                self._save_to_csv(file_path, data)
+            elif extension == 'xlsx':
+                self._save_to_excel(file_path, data)
+            else:
+                messagebox.showerror("Ошибка", "Неподдерживаемый формат файла")
+                return
+
+            messagebox.showinfo("Успех", f"Файл успешно сохранён:\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении файла:\n{str(e)}")
+
+    def _save_to_docx(self, file_path, data):
+        """Сохраняет результаты в документ Word"""
+        doc = Document()
+    
+        # Добавляем заголовок
+        doc.add_heading('Результаты расчёта нагрузок', level=1)
+    
+        # Добавляем таблицу
+        table = doc.add_table(rows=1, cols=3)
+        table.style = 'Table Grid'
+    
+        # Заголовки таблицы
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = 'Параметр'
+        hdr_cells[1].text = 'Значение'
+        hdr_cells[2].text = 'Ед. изм.'
+    
+        # Данные таблицы
+        for item in data:
+            row_cells = table.add_row().cells
+            row_cells[0].text = item['parameter']
+            row_cells[1].text = item['value']
+            row_cells[2].text = item['unit']
+    
+        doc.save(file_path)
+
+    def _save_to_csv(self, file_path, data):
+        """Сохраняет результаты в CSV файл"""
+        with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['Параметр', 'Значение', 'Ед. изм.']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+            writer.writeheader()
+            for item in data:
+                writer.writerow({
+                    'Параметр': item['parameter'],
+                    'Значение': item['value'],
+                    'Ед. изм.': item['unit']
+                })
+
+    def _save_to_excel(self, file_path, data):
+        """Сохраняет результаты в Excel файл"""
         wb = Workbook()
         ws = wb.active
-        headers = ["t", "U", "D", "q_(c)hru", "q_(c)0", "Группа (t_num)", "Потребитель", "Pc*N", "alpha", "Q", "Скорость"]
-        ws.append(headers)
-        for result in self.results_data:
-            ws.append(result)
+        ws.title = "Результаты расчёта"
+    
+        # Заголовки
+        ws.append(['Параметр', 'Значение', 'Ед. изм.'])
+    
+        # Данные
+        for item in data:
+            ws.append([item['parameter'], item['value'], item['unit']])
+    
+        # Автоподбор ширины столбцов
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2) * 1.2
+            ws.column_dimensions[column_letter].width = adjusted_width
+    
         wb.save(file_path)
-        messagebox.showinfo("Успех", "Результаты сохранены в Excel-файле.")
 
-    def save_to_docx(self, file_path):
-        document = Document()
-        table = document.add_table(rows=len(self.results_data)+1, cols=11)
-        headers = ["t", "U", "D", "q_(c)hru", "q_(c)0", "Группа (t_num)", "Потребитель", "Pc*N", "alpha", "Q", "Скорость"]
-        hdr_cells = table.rows[0].cells
-        for i, header in enumerate(headers):
-            hdr_cells[i].text = header
-        for row_idx, result in enumerate(self.results_data):
-            row_cells = table.rows[row_idx+1].cells
-            for col_idx, item in enumerate(result):
-                row_cells[col_idx].text = str(item)
-        document.save(file_path)
-        messagebox.showinfo("Успех", "Результаты сохранены в DOCX-файле.")
+class ConsumerCalculator:
+    RESULT_HEADERS = [
+        "t", "U", "D", "q_(c)hru", "q_(c)0", 
+        "Группа (t_num)", "Потребитель", 
+        "Pc*N", "alpha", "Q", "Скорость"
+    ]
+    
+    TEXT = {
+        "title": "Гидравлический расчёт системы водоснабжения по СП 30.13330.2020",
+        "consumer_label": "СП 30.13330",
+        "t_entry_default": "Введите номер потребителя",
+        "u_entry_default": "Введите U",
+        "add_section": "➕ Добавить участок",
+        "delete_section": "❌ Удалить участок",
+        "calculate": "🔄 Рассчитать",
+        "show_results": "📊 Результаты расчёта",
+        "save_results": "💾 Сохранить результаты",
+        "success": "Успех",
+        "error": "Ошибка",
+        "file_not_saved": "Файл не сохранён.",
+        "calculation_success": "Расчет выполнен успешно.",
+        "no_data": "Нет данных для отображения.",
+        "invalid_t": "Введите корректное значение для t.",
+        "t_not_found": "Значение t={} не найдено в массиве.",
+        "section_error": "Ошибка в расчетах участка: {}",
+        "interpolation_error": "Не удалось выполнить интерполяцию.",
+        "velocity_error": "Не удалось вычислить значение скорости."
+    }
 
-    def save_to_csv(self, file_path):
-        with open(file_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            headers = ["t", "U", "D", "q_(c)hru", "q_(c)0", "Группа (t_num)", "Потребитель", "Pc*N", "alpha", "Q", "Скорость"]
-            writer.writerow(headers)
-            for result in self.results_data:
-                writer.writerow(result)
-        messagebox.showinfo("Успех", "Результаты сохранены в CSV-файле.")
+    def __init__(self, master: tk.Tk):
+        self.master = master
+        self.current_consumer_data = None
+        self.master.title(self.TEXT["title"])
+        self.master.minsize(800, 600)
+        
+        self.entries = []
+        self.results = []
+        self.current_consumer = ""
+        
+        self._setup_ui()
+        self.add_section()
+
+    def _setup_ui(self) -> None:
+        self._create_input_panel()
+        self._create_scrollable_area()
+      
+    def _create_input_panel(self) -> None:
+        input_frame = ttk.Frame(self.master, padding="10")
+        input_frame.pack(fill=tk.X)
+        
+        ttk.Label(input_frame, text=self.TEXT["consumer_label"]).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            input_frame, text="📈 Расчёт нагрузок",
+            command=self.open_load_calculator
+        ).pack(side=tk.LEFT, padx=5)
+        
+        self.t_entry = ttk.Entry(input_frame)
+        self.t_entry.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        self.t_entry.insert(0, self.TEXT["t_entry_default"])
+        
+        buttons = [
+            (self.TEXT["calculate"], self.calculate),
+            (self.TEXT["show_results"], self.show_results),
+            (self.TEXT["save_results"], self.save_results)
+        ]
+        
+        for text, command in buttons:
+            ttk.Button(
+                input_frame, text=text, command=command
+            ).pack(side=tk.LEFT, padx=5)
+
+    def open_load_calculator(self):
+        try:
+            if not self.current_consumer_data:
+                raise ValueError("Сначала выполните расчет потребителя")
+                
+            LoadCalculator(self.master, self.current_consumer_data)
+        except ValueError as e:
+            messagebox.showerror("Ошибка", str(e))
+
+    def _create_scrollable_area(self) -> None:
+        container = ttk.Frame(self.master)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        self.canvas = tk.Canvas(container)
+        scrollbar_y = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        scrollbar_x = ttk.Scrollbar(container, orient="horizontal", command=self.canvas.xview)
+        
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar_y.set)
+        self.canvas.configure(xscrollcommand=scrollbar_x.set)
+        
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def add_section(self, after_frame: Optional[tk.Frame] = None) -> None:
+        new_frame = ttk.Frame(self.scrollable_frame, padding="5")
+    
+        u_entry = ttk.Entry(new_frame)
+        u_entry.pack(side=tk.LEFT, padx=5)
+        u_entry.insert(0, self.TEXT["u_entry_default"])
+
+        diam_values = [d for d in data.diam_values if d > 0]
+        diam_str_values = [str(int(d)) for d in diam_values]
+    
+        diam_var = StringVar(value=diam_str_values[0])
+        diam_menu = ttk.OptionMenu(
+            new_frame, 
+            diam_var, 
+            diam_str_values[0],
+            *diam_str_values
+        )
+        diam_menu.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            new_frame, text=self.TEXT["add_section"],
+            command=lambda: self.add_section(new_frame)
+        ).pack(side=tk.LEFT, padx=5)
+    
+        ttk.Button(
+            new_frame, text=self.TEXT["delete_section"],
+            command=lambda: self.remove_section(new_frame)
+        ).pack(side=tk.LEFT, padx=5)
+
+        if after_frame:
+            for i, (_, _, frame) in enumerate(self.entries):
+                if frame == after_frame:
+                    self.entries.insert(i+1, (u_entry, diam_var, new_frame))
+                    new_frame.pack(in_=self.scrollable_frame, after=after_frame)
+                    break
+        else:
+            self.entries.append((u_entry, diam_var, new_frame))
+            new_frame.pack(in_=self.scrollable_frame)
+
+    def remove_section(self, frame: tk.Frame) -> None:
+        if len(self.entries) <= 1:
+            messagebox.showwarning(self.TEXT["error"], "Нельзя удалить последний участок")
+            return
+            
+        frame.destroy()
+        self.entries = [entry for entry in self.entries if entry[2] != frame]
+
+    def calculate(self) -> None:
+        self.results.clear()
+        
+        try:
+            t_input = self._validate_t_input()
+            index, params = self._get_consumer_params(t_input)
+            
+            self.current_consumer_data = {
+                't_input': t_input,
+                'index': index,
+                'params': params,
+                'q_tot_hru': data.q_tot_hru_values[index],
+                'q_h_hru': data.q_h_hru_values[index],
+                'q_c_hru': data.q_c_hru_values[index],
+                'q_tot': data.q_tot_values[index],
+                'q_h': data.q_h_values[index],
+                'q_c': data.q_c_values[index],
+                'q_tot_0': data.q_tot_0_values[index],
+                'q_h_0': data.q_h_0_values[index],
+                'q_c_0': data.q_c_0_values[index],
+                'q_tot_0_hr': data.q_tot_0_hr_values[index],
+                'q_h_0_hr': data.q_h_0_hr_values[index],
+                'q_c_0_hr': data.q_c_0_hr_values[index],
+                'consumer_name': params[3]
+            }
+            self.current_consumer = params[3]
+            
+            for u_entry, diam_var, _ in self.entries:
+                result = self._calculate_section(u_entry, diam_var, t_input, *params)
+                self.results.append(result)
+                
+            messagebox.showinfo(self.TEXT["success"], self.TEXT["calculation_success"])
+        except ValueError as e:
+            messagebox.showerror(self.TEXT["error"], str(e))
+
+    def _validate_t_input(self) -> float:
+        try:
+            t_input = float(self.t_entry.get())
+            if t_input not in data.t_values:
+                raise ValueError(self.TEXT["t_not_found"].format(t_input))
+            return t_input
+        except ValueError:
+            raise ValueError(self.TEXT["invalid_t"])
+
+    def _get_consumer_params(self, t_input: float) -> Tuple[int, Tuple[float, float, int, str]]:
+        index = np.where(data.t_values == t_input)[0][0]
+        return index, (
+            data.q_c_hru_values[index],
+            data.q_c_0_values[index],
+            data.t_num_values[index],
+            data.t_string_values[index]
+        )
+
+    def _calculate_section(self, u_entry: tk.Entry, diam_var: StringVar, 
+                          t_input: float, q_c_hru: float, q_c_0: float, 
+                          t_num: int, t_string: str) -> CalculationResult:
+        try:
+            U = float(u_entry.get())
+            D = int(diam_var.get())
+            v_values = data.v_dict[D]
+
+            x_input = (q_c_hru * U) / (3600 * q_c_0)
+            alpha = self._interpolate(x_input, data.x_values, data.y_values)
+            Q = 5 * q_c_0 * alpha
+            velocity = self._interpolate_velocity(Q, v_values)
+
+            return CalculationResult(
+                t=t_input, U=U, D=D, q_chru=q_c_hru, q_c0=q_c_0,
+                group=t_num, consumer=t_string, PcN=x_input,
+                alpha=alpha, Q=Q, velocity=velocity
+            )
+        except ValueError as e:
+            raise ValueError(self.TEXT["section_error"].format(str(e)))
+
+    def _interpolate_velocity(self, Q: float, v_values: List[float]) -> float:
+        q_values = data.q_values
+        try:
+            if Q < q_values[0]:
+                return self._linear_interpolation(Q, q_values[0], q_values[1], v_values[0], v_values[1])
+            if Q > q_values[-1]:
+                return self._linear_interpolation(Q, q_values[-2], q_values[-1], v_values[-2], v_values[-1])
+            
+            for i in range(len(q_values) - 1):
+                if q_values[i] <= Q <= q_values[i + 1]:
+                    return self._linear_interpolation(Q, q_values[i], q_values[i + 1], v_values[i], v_values[i + 1])
+        except IndexError:
+            pass
+            
+        raise ValueError(self.TEXT["velocity_error"])
+
+    @staticmethod
+    def _interpolate(x: float, x_values: List[float], y_values: List[float]) -> float:
+        try:
+            if x < x_values[0]:
+                return ConsumerCalculator._linear_interpolation(x, x_values[0], x_values[1], y_values[0], y_values[1])
+            if x > x_values[-1]:
+                return ConsumerCalculator._linear_interpolation(x, x_values[-2], x_values[-1], y_values[-2], y_values[-1])
+            
+            for i in range(len(x_values) - 1):
+                if x_values[i] <= x <= x_values[i + 1]:
+                    return ConsumerCalculator._linear_interpolation(x, x_values[i], x_values[i + 1], y_values[i], y_values[i + 1])
+        except IndexError:
+            pass
+            
+        raise ValueError(ConsumerCalculator.TEXT["interpolation_error"])
+
+    @staticmethod
+    def _linear_interpolation(x: float, x0: float, x1: float, y0: float, y1: float) -> float:
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+
+    def show_results(self) -> None:
+        if not self.results:
+            messagebox.showwarning(self.TEXT["error"], self.TEXT["no_data"])
+            return
+        
+        results_window = Toplevel(self.master)
+        results_window.title(self.TEXT["show_results"])
+        results_window.minsize(800, 400)
+        
+        ttk.Label(
+            results_window, 
+            text=f"Потребитель: {self.current_consumer}", 
+            font=("Arial", 12, "bold")
+        ).pack(pady=10)
+
+        tree = ttk.Treeview(results_window, columns=self.RESULT_HEADERS, show="headings")
+        
+        for header in self.RESULT_HEADERS:
+            tree.heading(header, text=header)
+            tree.column(header, width=100, anchor=tk.CENTER)
+        
+        for result in self.results:
+            tree.insert("", tk.END, values=[
+                result.t, result.U, result.D, result.q_chru, result.q_c0,
+                result.group, result.consumer, round(result.PcN, 4),
+                round(result.alpha, 4), round(result.Q, 4), round(result.velocity, 4)
+            ])
+        
+        y_scroll = ttk.Scrollbar(results_window, orient="vertical", command=tree.yview)
+        x_scroll = ttk.Scrollbar(results_window, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        x_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def save_results(self) -> None:
+        if not self.results:
+            messagebox.showwarning(self.TEXT["error"], self.TEXT["no_data"])
+            return
+        
+        file_path = tk.filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[ft.value for ft in FileType],
+            title="Сохранить результаты"
+        )
+        
+        if not file_path:
+            messagebox.showwarning(self.TEXT["file_not_saved"], self.TEXT["file_not_saved"])
+            return
+        
+        try:
+            extension = file_path.split('.')[-1].lower()
+            if extension == 'csv':
+                self._save_to_csv(file_path)
+            elif extension == 'xlsx':
+                self._save_to_excel(file_path)
+            elif extension == 'docx':
+                self._save_to_docx(file_path)
+            else:
+                messagebox.showerror(self.TEXT["error"], "Неподдерживаемый формат файла")
+                return
+                
+            messagebox.showinfo(self.TEXT["success"], f"Файл успешно сохранён: {file_path}")
+        except Exception as e:
+            messagebox.showerror(self.TEXT["error"], f"Ошибка при сохранении: {str(e)}")
+
+    def _save_to_csv(self, file_path: str) -> None:
+        with open(file_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(self.RESULT_HEADERS)
+            for result in self.results:
+                writer.writerow([
+                    result.t, result.U, result.D, result.q_chru, result.q_c0,
+                    result.group, result.consumer, result.PcN,
+                    result.alpha, result.Q, result.velocity
+                ])
+
+    def _save_to_excel(self, file_path: str) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Результаты расчёта"
+        ws.append(self.RESULT_HEADERS)
+        
+        for result in self.results:
+            ws.append([
+                result.t, result.U, result.D, result.q_chru, result.q_c0,
+                result.group, result.consumer, result.PcN,
+                result.alpha, result.Q, result.velocity
+            ])
+            
+        wb.save(file_path)
+
+    def _save_to_docx(self, file_path: str) -> None:
+        doc = Document()
+        doc.add_heading(f"Результаты расчёта: {self.current_consumer}", level=1)
+        
+        table = doc.add_table(rows=1, cols=len(self.RESULT_HEADERS))
+        table.style = 'Table Grid'
+        
+        for i, header in enumerate(self.RESULT_HEADERS):
+            table.cell(0, i).text = header
+            
+        for result in self.results:
+            row = table.add_row().cells
+            values = [
+                str(result.t), str(result.U), str(result.D), str(result.q_chru),
+                str(result.q_c0), str(result.group), result.consumer,
+                f"{result.PcN:.4f}", f"{result.alpha:.4f}", 
+                f"{result.Q:.4f}", f"{result.velocity:.4f}"
+            ]
+            for i, value in enumerate(values):
+                row[i].text = value
+                
+        doc.save(file_path)
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = ConsumerCalculator(root)
+    root.eval('tk::PlaceWindow . center')
     root.mainloop()
