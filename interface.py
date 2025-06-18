@@ -916,21 +916,27 @@ class LoadCalculator:
         temp_frame = ttk.Frame(self.top, padding="10")
         temp_frame.pack(fill=tk.X)
         
-        ttk.Label(temp_frame, text="Температура горячей воды (t_h):").pack(side=tk.LEFT)
+        ttk.Label(temp_frame, text="Температура горячей воды (t_h, oC):").pack(side=tk.LEFT)
         self.t_h_entry = ttk.Entry(temp_frame, width=5)
         self.t_h_entry.insert(0, "60")
         self.t_h_entry.pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(temp_frame, text="Температура холодной воды (t_c):").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Label(temp_frame, text="Температура холодной воды (t_c, oC):").pack(side=tk.LEFT, padx=(10,0))
         self.t_c_entry = ttk.Entry(temp_frame, width=5)
         self.t_c_entry.insert(0, "5")
         self.t_c_entry.pack(side=tk.LEFT)
+
+        ttk.Label(temp_frame, text="Период водопотребления (T, ч):").pack(side=tk.LEFT, padx=(10,0))
+        self.T_entry = ttk.Entry(temp_frame, width=5)
+        self.T_entry.insert(0, "24")
+        self.T_entry.pack(side=tk.LEFT)
     
     def calculate(self):
         try:
             U = float(self.u_entry.get())
             t_h = float(self.t_h_entry.get())
             t_c = float(self.t_c_entry.get())
+            T = float(self.T_entry.get())
             
             for item in self.tree.get_children():
                 self.tree.delete(item)
@@ -948,7 +954,17 @@ class LoadCalculator:
                     ("Секундная вероятность действия приборов на ХВС (P_c*N)", 
                      (self.consumer_data['q_c_hru'] * U) / (3600 * self.consumer_data['q_c_0']), 
                      "-"),
-                     
+
+                    ("Альфа секундная общая (a_tot)", 
+                     self._calculate_alpha(self.consumer_data['q_tot_hru'], self.consumer_data['q_tot_0'], U), 
+                     "-"),
+                    ("Альфа секундная на ГВС (a_h)", 
+                     self._calculate_alpha(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0'], U), 
+                     "-"),
+                    ("Альфа секундная на ХВС (a_c)", 
+                     self._calculate_alpha(self.consumer_data['q_c_hru'], self.consumer_data['q_c_0'], U), 
+                     "-"),
+
                     ("Расчётный секундный расход общий (q_tot)", 
                      5 * self.consumer_data['q_tot_0'] * self._calculate_alpha(self.consumer_data['q_tot_hru'], self.consumer_data['q_tot_0'], U), 
                      "л/с"),
@@ -967,6 +983,16 @@ class LoadCalculator:
                      "-"),
                     ("Часовая вероятность действия приборов на ХВС (P_c*N)", 
                      self.consumer_data['q_c_hru'] * U / self.consumer_data['q_c_0_hr'], 
+                     "-"),
+
+                    ("Альфа часовая общая (a_tot_hr)", 
+                     self._calculate_alpha_h(self.consumer_data['q_tot_hru'], self.consumer_data['q_tot_0_hr'], U), 
+                     "-"),
+                    ("Альфа часовая на ГВС(a_h_hr)", 
+                     self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U), 
+                     "-"),
+                    ("Альфа часовая на ХВС (a_c_hr)", 
+                     self._calculate_alpha_h(self.consumer_data['q_c_hru'], self.consumer_data['q_c_0_hr'], U), 
                      "-"),
                      
                     ("Часовой расход общий (q_tot_hr)", 
@@ -989,9 +1015,24 @@ class LoadCalculator:
                      self.consumer_data['q_c'] * U / 1000, 
                      "м³/сут"),
                      
-                    ("Расход тепла на ГВС (Q(h,hr))", 
+                    ("Расход тепла на ГВС максимальный (Q(h,hr))", 
                      1.16 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)) * (t_h - t_c) + 0.4 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)), 
-                     "кВт")
+                     "кВт"),
+
+                    ("Расход тепла на ГВС максимальный (Q(h,hr))", 
+                     0.0008598452*(1.16 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)) * (t_h - t_c) + 0.4 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U))), 
+                     "Гкал/ч"),
+
+                    #Q(h,T) = 1,16 × q(h,T) × (t(h) – t(с)) + Q(ht) 
+                    #q(h,T) = qh_u,m × Ui/(1000 × T)
+
+                    ("Расход тепла на ГВС средний (Q(h,T))", 
+                     1.16 * (self.consumer_data['q_h'] * U/(1000 * T)) * (t_h - t_c) + 0.4 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U)), 
+                     "кВт"),
+
+                    ("Расход тепла на ГВС средний (Q(h,T))", 
+                    0.0008598452*(1.16 * (self.consumer_data['q_h'] * U/(1000 * T)) * (t_h - t_c) + 0.4 * (0.005 * self.consumer_data['q_h_0_hr'] * self._calculate_alpha_h(self.consumer_data['q_h_hru'], self.consumer_data['q_h_0_hr'], U))), 
+                     "Гкал/ч"),
                 ]
                 
                 for param, value, unit in results:
@@ -1002,7 +1043,27 @@ class LoadCalculator:
                 
         except ValueError as e:
             messagebox.showerror("Ошибка", f"Некорректный ввод: {str(e)}")
-    
+
+    @staticmethod
+    def _interpolate(x: float, x_values: List[float], y_values: List[float]) -> float:
+        try:
+            if x < x_values[0]:
+                return LoadCalculator._linear_interpolation(x, x_values[0], x_values[1], y_values[0], y_values[1])
+            if x > x_values[-1]:
+                return LoadCalculator._linear_interpolation(x, x_values[-2], x_values[-1], y_values[-2], y_values[-1])
+            
+            for i in range(len(x_values) - 1):
+                if x_values[i] <= x <= x_values[i + 1]:
+                    return LoadCalculator._linear_interpolation(x, x_values[i], x_values[i + 1], y_values[i], y_values[i + 1])
+        except IndexError:
+            pass
+            
+        raise ValueError(LoadCalculator.TEXT["interpolation_error"])
+
+    @staticmethod
+    def _linear_interpolation(x: float, x0: float, x1: float, y0: float, y1: float) -> float:
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+
     #секундная альфа
     def _calculate_alpha(self, q_hru, q_0, U):
         x = (q_hru * U) / (3600 * q_0)
@@ -1011,7 +1072,8 @@ class LoadCalculator:
     #часовая альфа
     def _calculate_alpha_h(self, q_hru, q_0, U):
         x = (q_hru * U) / (q_0)
-        return ConsumerCalculator._interpolate(x, data.x_values, data.y_values)
+#        return x
+        return LoadCalculator._interpolate(x, data.x_values, data.y_values)
     
     def save_results(self):
         """Сохраняет результаты расчётов в файл (DOCX, CSV или Excel)"""
